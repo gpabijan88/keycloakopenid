@@ -1,4 +1,4 @@
-module github.com/gpabijan88/traefik_keycloak_plugin
+module github.com/gpabijan88/keycloakopenid
 
 go 1.20
 
