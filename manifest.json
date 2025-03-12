@@ -1,7 +1,0 @@
-{
-  "name": "keycloak-auth",
-  "description": "Middleware for validating Keycloak tokens",
-  "version": "0.1.0",
-  "author": "Greg Pabijan-Morawski <gpabijan@gp-ittech.eu>",
-  "license": "MIT"
-}
