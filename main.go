@@ -13,122 +13,58 @@ import (
 )
 
 func (k *keycloakAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	for _, substr := range k.IgnorePathPrefixes {
-		if strings.Contains(req.URL.Path, substr) {
+	// 1️⃣ Sprawdzamy JWT w cookie
+	cookie, err := req.Cookie("JWT_AUTH")
+	if err == nil {
+		// Jeśli cookie istnieje, sprawdzamy poprawność JWT
+		valid, err := ValidateJWT(cookie.Value)
+		if valid {
+			fmt.Println("✅ Poprawny JWT, przepuszczamy request")
+			req.Header.Set("Authorization", "Bearer "+cookie.Value) // Przekazujemy JWT dalej
 			k.next.ServeHTTP(rw, req)
 			return
 		}
+		fmt.Println("❌ Błąd JWT:", err)
 	}
-	cookie, err := req.Cookie("Authorization")
-	if err == nil && strings.HasPrefix(cookie.Value, "Bearer ") {
-		token := strings.TrimPrefix(cookie.Value, "Bearer ")
-		fmt.Printf("token = %+v\n", token)
 
-		ok, err := k.verifyToken(token)
-		fmt.Printf("ok = %+v\n", ok)
-		if err != nil {
-			http.Error(rw, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	// 2️⃣ Brak ważnego JWT → uwierzytelnienie w Keycloak
+	fmt.Println("🔄 Brak poprawnego JWT, uwierzytelnianie w Keycloak...")
+	authCode := req.URL.Query().Get("code")
 
-		if !ok {
-			qry := req.URL.Query()
-			qry.Del("code")
-			qry.Del("state")
-			qry.Del("session_state")
-			req.URL.RawQuery = qry.Encode()
-			req.RequestURI = req.URL.RequestURI()
-
-			expiration := time.Now().Add(-24 * time.Hour)
-			newCookie := &http.Cookie{
-				Name:    "Authorization",
-				Value:   "",
-				Path:    "/",
-				Expires: expiration,
-				MaxAge:  -1,
-			}
-			http.SetCookie(rw, newCookie)
-
-			k.redirectToKeycloak(rw, req)
-			return
-		}
-		user, err := extractClaims(token, k.UserClaimName)
-		if err == nil {
-			req.Header.Set(k.UserHeaderName, user)
-		}
-
-		if k.UseAuthHeader {
-			// Optionally set the Bearer token to the Authorization header.
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-
-		k.next.ServeHTTP(rw, req)
-	} else {
-		authCode := req.URL.Query().Get("code")
-		if authCode == "" {
-			fmt.Printf("code is missing, redirect to keycloak\n")
-			k.redirectToKeycloak(rw, req)
-			return
-		}
-
-		stateBase64 := req.URL.Query().Get("state")
-		if stateBase64 == "" {
-			fmt.Printf("state is missing, redirect to keycloak\n")
-			k.redirectToKeycloak(rw, req)
-			return
-		}
-
-		fmt.Printf("exchange auth code called\n")
-		token, err := k.exchangeAuthCode(req, authCode, stateBase64)
-		fmt.Printf("exchange auth code finished %+v\n", token)
-		if err != nil {
-			http.Error(rw, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		if k.UseAuthHeader {
-			// Optionally set the Bearer token to the Authorization header.
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-
-		authCookie := &http.Cookie{
-			Name:     "Authorization",
-			Value:    "Bearer " + token,
-			Secure:   true,
-			HttpOnly: true,
-			Path:     "/",
-			SameSite: http.SameSiteLaxMode, // Allows requests originating from sibling domains (same parent diff sub domain) to access the cookie
-		}
-
-		tokenCookie := &http.Cookie{
-			Name:     k.TokenCookieName, // Defaults to "AUTH_TOKEN"
-			Value:    token,
-			Secure:   true,
-			HttpOnly: true,
-			Path:     "/",
-			SameSite: http.SameSiteLaxMode, // Allows requests originating from sibling domains (same parent diff sub domain) to access the cookie
-		}
-
-		http.SetCookie(rw, authCookie)
-		req.AddCookie(authCookie) // Add the cookie to the request so it is present on the redirect and prevents infite loop of redirects.
-
-		// Set the token to a default/custom cookie that doesnt require trimming the Bearer prefix for common integration compatibility
-		http.SetCookie(rw, tokenCookie)
-		req.AddCookie(tokenCookie) // Add the cookie to the request so it is present on the initial redirect below.
-
-		qry := req.URL.Query()
-		qry.Del("code")
-		qry.Del("state")
-		qry.Del("session_state")
-		req.URL.RawQuery = qry.Encode()
-		req.RequestURI = req.URL.RequestURI()
-
-		scheme := req.Header.Get("X-Forwarded-Proto")
-		host := req.Header.Get("X-Forwarded-Host")
-		originalURL := fmt.Sprintf("%s://%s%s", scheme, host, req.RequestURI)
-
-		http.Redirect(rw, req, originalURL, http.StatusTemporaryRedirect)
+	if authCode == "" {
+		fmt.Printf("code is missing, redirect to Keycloak\n")
+		k.redirectToKeycloak(rw, req)
+		return
 	}
+
+	// 3️⃣ Wymieniamy kod autoryzacyjny na token
+	token, err := k.exchangeAuthCode(req, authCode, req.URL.Query().Get("state"))
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	fmt.Println("✅ Otrzymany token z Keycloak:", token) // Dodaj log do sprawdzenia wartości tokena
+
+	// 4️⃣ Generujemy JWT i zapisujemy w cookie
+	jwtToken, err := GenerateJWT("user123") // Możesz przekazać prawdziwe ID użytkownika
+	if err != nil {
+		http.Error(rw, "Błąd generowania tokena JWT", http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(rw, &http.Cookie{
+		Name:     "JWT_AUTH",
+		Value:    jwtToken,
+		Path:     "/",
+		Expires:  time.Now().Add(30 * time.Minute),
+		HttpOnly: true,
+		Secure:   true,
+	})
+
+	fmt.Println("✅ Nowy JWT wygenerowany, przepuszczamy request")
+	req.Header.Set("Authorization", "Bearer "+jwtToken) // Przekazujemy nowy JWT w headerze
+
+	k.next.ServeHTTP(rw, req)
 }
 
 func extractClaims(tokenString string, claimName string) (string, error) {
