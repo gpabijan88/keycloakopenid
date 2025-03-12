@@ -1,4 +1,4 @@
-package traefik_keycloak_plugin
+package keycloakopenid
 
 import (
 	"context"

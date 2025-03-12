@@ -1,4 +1,4 @@
-package traefik_keycloak_plugin
+package keycloakopenid
 
 import (
 	"encoding/base64"
@@ -59,7 +59,7 @@ func (k *keycloakAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 		if k.UseAuthHeader {
 			// Optionally set the Bearer token to the Authorization header.
-			req.Header.Set("Authorization", "Bearer " + token)
+			req.Header.Set("Authorization", "Bearer "+token)
 		}
 
 		k.next.ServeHTTP(rw, req)
@@ -88,7 +88,7 @@ func (k *keycloakAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 		if k.UseAuthHeader {
 			// Optionally set the Bearer token to the Authorization header.
-			req.Header.Set("Authorization", "Bearer " + token)
+			req.Header.Set("Authorization", "Bearer "+token)
 		}
 
 		authCookie := &http.Cookie{
@@ -218,7 +218,7 @@ func (k *keycloakAuth) redirectToKeycloak(rw http.ResponseWriter, req *http.Requ
 		"client_id":     {k.ClientID},
 		"redirect_uri":  {originalURL},
 		"state":         {stateBase64},
-		"scope":				 {k.Scope},
+		"scope":         {k.Scope},
 	}.Encode()
 
 	http.Redirect(rw, req, redirectURL.String(), http.StatusTemporaryRedirect)
